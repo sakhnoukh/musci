@@ -8,11 +8,13 @@ from pathlib import Path
 
 import numpy as np
 import soundfile as sf
+from rich.cells import cell_len
 from typer.testing import CliRunner
 
 from musci.analyzer import SAMPLE_RATE
 from musci.cli import app
 from musci.models import PlaylistBatch, TrackOutcome, TrackSpec
+from musci.ui import parse_repl_line, render_3d_logo, render_dj_sprite
 
 runner = CliRunner()
 
@@ -106,3 +108,34 @@ def test_cli_download_only_skips_analysis(tmp_path: Path, monkeypatch) -> None:
     assert rows[0]["bpm"] == ""
     assert rows[0]["camelot_key"] == ""
     assert rows[0]["status"] == "downloaded"
+
+
+def test_splash_screen_and_3d_sprite_alignment() -> None:
+    for step in range(6):
+        logo_widths = {cell_len(r.plain) for r in render_3d_logo(step * 0.1)}
+        sprite_widths = {cell_len(r.plain) for r in render_dj_sprite(step)}
+        assert logo_widths == {43}
+        assert sprite_widths == {22}
+
+    res = runner.invoke(app, ["--splash"])
+    assert res.exit_code == 0, res.stdout
+    assert "Welcome to musci" in res.stdout
+    assert "[128 BPM]" in res.stdout
+    assert "[320K]" in res.stdout
+
+
+def test_parse_repl_line_auto_routes_urls_and_commands() -> None:
+    assert parse_repl_line("   ") is None
+    assert parse_repl_line("exit") == "__EXIT__"
+    assert parse_repl_line("clear") == "__CLEAR__"
+    assert parse_repl_line("help") == "__HELP__"
+    assert parse_repl_line("https://open.spotify.com/playlist/37i9dQZF1DX4dyzvuaRJ0n") == [
+        "download",
+        "https://open.spotify.com/playlist/37i9dQZF1DX4dyzvuaRJ0n",
+    ]
+    assert parse_repl_line('musci download "https://music.apple.com/us/playlist/pl.123" --download-only') == [
+        "download",
+        "https://music.apple.com/us/playlist/pl.123",
+        "--download-only",
+    ]
+    assert parse_repl_line("analyze ./downloads") == ["analyze", "./downloads"]

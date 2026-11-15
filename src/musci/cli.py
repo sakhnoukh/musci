@@ -5,28 +5,95 @@ from __future__ import annotations
 import csv
 import os
 from pathlib import Path
+import sys
 from typing import Annotated, Optional
 
+import click
 import typer
 from dotenv import load_dotenv, set_key
 from rich.console import Console
 from rich.progress import BarColumn, MofNCompleteColumn, Progress, SpinnerColumn, TextColumn, TimeElapsedColumn
 from rich.table import Table
 
+from musci import __version__
 from musci.analyzer import analyze_audio_file
 from musci.downloader import ManifestStore, download_batch, sanitize_filename
 from musci.models import AnalysisResult, KeyFormat, TrackOutcome, TrackSpec, lookup_keys_from_tag
 from musci.sources import resolve_inputs
 from musci.sources.spotify import SPOTIFY_REDIRECT_URI, run_spotify_oauth_login
 from musci.tagger import apply_filename_prefix, read_dj_tags, write_track_tags
+from musci.ui import run_interactive_shell, show_startup_screen
 
 app = typer.Typer(
     name="musci",
     help="Bulk Spotify, Apple Music & YouTube playlist 320kbps CBR MP3 downloader and DJ BPM/Camelot key analyzer.",
     add_completion=False,
-    no_args_is_help=True,
 )
 console = Console()
+GLOBAL_CONFIG_ENV = Path.home() / ".config" / "musci" / ".env"
+
+
+def _load_musci_env(explicit_env: Path | None = None) -> None:
+    if GLOBAL_CONFIG_ENV.exists():
+        load_dotenv(dotenv_path=GLOBAL_CONFIG_ENV, override=False)
+    local_env = explicit_env or Path(".env")
+    if local_env.exists():
+        load_dotenv(dotenv_path=local_env, override=True)
+
+
+def _default_env_target(explicit_env: Path | None = None) -> Path:
+    if explicit_env is not None:
+        return explicit_env
+    if Path(".env").exists():
+        return Path(".env")
+    GLOBAL_CONFIG_ENV.parent.mkdir(mode=0o700, parents=True, exist_ok=True)
+    return GLOBAL_CONFIG_ENV
+
+
+def _dispatch_subcommand(argv: list[str]) -> None:
+    try:
+        app(args=argv, prog_name="musci", standalone_mode=False)
+    except typer.Exit:
+        return
+    except click.ClickException as exc:
+        console.print(f"[red]Error:[/red] {exc.format_message()}")
+    except SystemExit:
+        return
+    except Exception as exc:
+        console.print(f"[red]Unexpected error:[/red] {exc}")
+
+
+@app.callback(invoke_without_command=True)
+def main_callback(
+    ctx: typer.Context,
+    version: Annotated[
+        bool,
+        typer.Option("-v", "--version", help="Print musci version and exit."),
+    ] = False,
+    splash_only: Annotated[
+        bool,
+        typer.Option("--splash", help="Render the 3D logo, DJ sprite, and command guide, then exit."),
+    ] = False,
+) -> None:
+    """Launch interactive musci DJ shell when called with no arguments, or run a subcommand."""
+    if version:
+        console.print(f"musci v{__version__}")
+        raise typer.Exit(code=0)
+
+    if ctx.invoked_subcommand is not None:
+        return
+
+    _load_musci_env()
+    if splash_only or not sys.stdin.isatty():
+        show_startup_screen(console, animate=False)
+        raise typer.Exit(code=0)
+
+    run_interactive_shell(
+        console=console,
+        dispatch_argv=_dispatch_subcommand,
+        reload_env=_load_musci_env,
+        animate=True,
+    )
 
 
 def _parse_bpm_range(bpm_range: str) -> tuple[float, float]:
@@ -154,8 +221,8 @@ def download_cmd(
         typer.Option("--no-artwork", help="Skip downloading and embedding cover art."),
     ] = False,
 ) -> None:
-    """Bulk-download Spotify or YouTube playlists/tracks as 320kbps CBR MP3s with optional BPM & key tagging."""
-    load_dotenv()
+    """Bulk-download Spotify, Apple Music, or YouTube playlists/tracks as 320kbps CBR MP3s with BPM & key tagging."""
+    _load_musci_env()
     url_list = inputs or []
     if not url_list and from_file is None:
         console.print("[red]Error:[/red] Provide at least one URL/query argument or --from-file.")
@@ -373,18 +440,19 @@ def analyze_cmd(
 @app.command("spotify-login")
 def spotify_login_cmd(
     env_file: Annotated[
-        Path,
-        typer.Option("--env-file", help="Path to .env file containing SPOTIFY_CLIENT_ID and SPOTIFY_CLIENT_SECRET."),
-    ] = Path(".env"),
+        Optional[Path],
+        typer.Option("--env-file", help="Optional path to .env file (defaults to ./.env or ~/.config/musci/.env)."),
+    ] = None,
 ) -> None:
     """Authenticate once in your browser to save SPOTIFY_REFRESH_TOKEN for 100+ track playlists."""
-    load_dotenv(dotenv_path=env_file)
+    target_env = _default_env_target(env_file)
+    _load_musci_env(target_env)
     client_id = os.getenv("SPOTIFY_CLIENT_ID") or ""
     client_secret = os.getenv("SPOTIFY_CLIENT_SECRET") or ""
     if not client_id or not client_secret:
         console.print(
-            f"[red]Error:[/red] Set SPOTIFY_CLIENT_ID and SPOTIFY_CLIENT_SECRET in {env_file} first.\n"
-            f"Make sure Redirect URI [bold]{SPOTIFY_REDIRECT_URI}[/bold] is added in your Spotify App Settings."
+            "[red]Error:[/red] SPOTIFY_CLIENT_ID and SPOTIFY_CLIENT_SECRET are not configured yet.\n"
+            "Run [bold cyan]musci spotify-setup[/bold cyan] for an interactive step-by-step wizard."
         )
         raise typer.Exit(code=1)
 
@@ -397,10 +465,44 @@ def spotify_login_cmd(
         console.print(f"[red]Spotify login failed:[/red] {exc}")
         raise typer.Exit(code=1) from exc
 
-    env_file.touch(mode=0o600, exist_ok=True)
-    os.chmod(env_file, 0o600)
-    set_key(str(env_file), "SPOTIFY_REFRESH_TOKEN", refresh_token, quote_mode="never")
-    console.print(f"[green]Success![/green] Saved SPOTIFY_REFRESH_TOKEN to [bold]{env_file}[/bold].")
+    target_env.parent.mkdir(mode=0o700, parents=True, exist_ok=True)
+    target_env.touch(mode=0o600, exist_ok=True)
+    os.chmod(target_env, 0o600)
+    set_key(str(target_env), "SPOTIFY_REFRESH_TOKEN", refresh_token, quote_mode="never")
+    os.environ["SPOTIFY_REFRESH_TOKEN"] = refresh_token
+    console.print(f"[green]Success![/green] Saved SPOTIFY_REFRESH_TOKEN to [bold]{target_env}[/bold].")
+
+
+@app.command("spotify-setup")
+def spotify_setup_cmd(
+    env_file: Annotated[
+        Optional[Path],
+        typer.Option("--env-file", help="Where to store credentials (defaults to ./.env or ~/.config/musci/.env)."),
+    ] = None,
+) -> None:
+    """Interactive wizard to configure Spotify Developer keys and link your account (no manual .env editing)."""
+    target_env = _default_env_target(env_file)
+    console.print(
+        "\n[bold #ccff00]Spotify 100+ Track Playlist Setup[/bold #ccff00]\n"
+        "1. Open [cyan]https://developer.spotify.com/dashboard[/cyan] and click [bold]Create app[/bold].\n"
+        f"2. Set Redirect URI to: [bold #00f5d4]{SPOTIFY_REDIRECT_URI}[/bold #00f5d4]\n"
+        "3. Copy your [bold]Client ID[/bold] and [bold]Client Secret[/bold] from the app's Settings page.\n"
+    )
+    client_id = typer.prompt("Spotify Client ID").strip()
+    client_secret = typer.prompt("Spotify Client Secret", hide_input=True).strip()
+    if not client_id or not client_secret:
+        console.print("[red]Error:[/red] Both Client ID and Client Secret are required.")
+        raise typer.Exit(code=1)
+
+    target_env.parent.mkdir(mode=0o700, parents=True, exist_ok=True)
+    target_env.touch(mode=0o600, exist_ok=True)
+    os.chmod(target_env, 0o600)
+    set_key(str(target_env), "SPOTIFY_CLIENT_ID", client_id, quote_mode="never")
+    set_key(str(target_env), "SPOTIFY_CLIENT_SECRET", client_secret, quote_mode="never")
+    os.environ["SPOTIFY_CLIENT_ID"] = client_id
+    os.environ["SPOTIFY_CLIENT_SECRET"] = client_secret
+
+    spotify_login_cmd(env_file=target_env)
 
 
 if __name__ == "__main__":

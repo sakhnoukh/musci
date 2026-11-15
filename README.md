@@ -7,15 +7,30 @@ Bulk playlist MP3 downloader and DJ mixing prep CLI. Supports **Spotify playlist
 
 Downloads audio concurrently as **320kbps CBR MP3s** (constant bitrate to prevent beatgrid drift in Rekordbox, Serato, Traktor, and CDJs) with **BPM + Camelot Wheel key detection** and **ID3v2.3** tagging.
 
-## Quickstart
+## Install (No Code / `.venv` Needed)
 
-Activate the virtual environment (or call `.venv/bin/musci` directly):
+Install `ffmpeg` + `pipx` once on macOS (Homebrew), then install `musci` globally:
 
 ```bash
-source .venv/bin/activate
+brew install ffmpeg pipx
+pipx ensurepath
+pipx install git+https://github.com/sakhnoukh/musci.git
+```
+*(Once published to PyPI, this becomes `pipx install musci`.)*
+
+## Launch the Interactive Terminal UI
+
+Just run:
+
+```bash
+musci
 ```
 
-### 1. Download a Spotify, Apple Music, or YouTube playlist (with BPM & Camelot key detection)
+`musci` boots with an animated **3D neon logo + spinning DJ turntable/EQ sprite**, system readiness indicators, a command cheat sheet, and an interactive `musci ▸` prompt where you can simply **paste any playlist URL** and hit Enter (or run commands directly from your shell below).
+
+### Direct CLI Commands
+
+#### 1. Download a Spotify, Apple Music, or YouTube playlist (with BPM & Camelot key detection)
 
 ```bash
 musci download "https://open.spotify.com/playlist/37i9dQZF1DXcBWIGoYBM5M"
@@ -57,14 +72,9 @@ For playlists with **100+ tracks** (using your Spotify Premium account):
 1. Go to the [Spotify Developer Dashboard](https://developer.spotify.com/dashboard) and click **Create app**:
    - **Redirect URI**: `http://127.0.0.1:8888/callback`
    - Check **Web API** and click **Save**.
-2. Copy `.env.example` to `.env` in this project folder and paste your **Client ID** and **Client Secret** (from your app's **Settings** page):
-   ```ini
-   SPOTIFY_CLIENT_ID=your_client_id_here
-   SPOTIFY_CLIENT_SECRET=your_client_secret_here
-   ```
-3. Run the one-time browser login command to automatically save `SPOTIFY_REFRESH_TOKEN` into `.env`:
+2. Run the guided setup wizard (prompts for your Client ID & Secret, stores them securely in `~/.config/musci/.env`, and opens browser login automatically):
    ```bash
-   musci spotify-login
+   musci spotify-setup
    ```
 4. **If the 100+ track playlist was created by someone else**: Under Spotify's 2026 Developer Mode rules, the API only returns full 100+ item lists for playlists you own or collaborate on. In Spotify Desktop, open the playlist, click `...` -> **Add to other playlist** -> **New playlist** (takes 2 seconds), and pass your new playlist's link to `musci download`.
 
