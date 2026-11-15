@@ -111,17 +111,23 @@ def test_cli_download_only_skips_analysis(tmp_path: Path, monkeypatch) -> None:
 
 
 def test_splash_screen_and_3d_sprite_alignment() -> None:
-    for step in range(6):
-        logo_widths = {cell_len(r.plain) for r in render_3d_logo(step * 0.1)}
-        sprite_widths = {cell_len(r.plain) for r in render_dj_sprite(step)}
+    for step in range(8):
+        logo_rows = render_3d_logo(step * 0.08, step=step)
+        sprite_rows = render_dj_sprite(step)
+        assert len(logo_rows) == 10
+        assert len(sprite_rows) == 10
+        logo_widths = {cell_len(r.plain) for r in logo_rows}
+        sprite_widths = {cell_len(r.plain) for r in sprite_rows}
         assert logo_widths == {43}
-        assert sprite_widths == {22}
+        assert sprite_widths == {47}
 
     res = runner.invoke(app, ["--splash"])
     assert res.exit_code == 0, res.stdout
     assert "Welcome to musci" in res.stdout
     assert "[128 BPM]" in res.stdout
     assert "[320K]" in res.stdout
+    assert "DECK-01 // JOG" in res.stdout
+    assert "SPECTRUM // EQ" in res.stdout
 
 
 def test_parse_repl_line_auto_routes_urls_and_commands() -> None:

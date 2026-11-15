@@ -9,14 +9,13 @@ Downloads audio concurrently as **320kbps CBR MP3s** (constant bitrate to preven
 
 ## Install (No Code / `.venv` Needed)
 
-Install `ffmpeg` + `pipx` once on macOS (Homebrew), then install `musci` globally:
+Install `ffmpeg` + `pipx` once on macOS (Homebrew), then install `musci` from PyPI:
 
 ```bash
 brew install ffmpeg pipx
 pipx ensurepath
-pipx install git+https://github.com/sakhnoukh/musci.git
+pipx install musci
 ```
-*(Once published to PyPI, this becomes `pipx install musci`.)*
 
 ## Launch the Interactive Terminal UI
 
