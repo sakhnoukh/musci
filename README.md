@@ -1,7 +1,7 @@
 # musci
 
 I wanted to start fucking around with mixing music, and couldn't be asked to download mp3s myself from youtube, so i thought i'd do something about it. 
-Could extend this to be like an npm package, but i still don't know if Spotify and Apple apis will let me do that. 
+Now a PyPi package with Spotify/Apple Music/Youtube/Souncloud integration. 
 
 Bulk playlist MP3 downloader and DJ mixing prep CLI. Supports **Spotify playlists/albums/tracks**, **Apple Music playlists/albums/songs**, **YouTube playlists/videos**, SoundCloud/Bandcamp links, and text tracklists.
 
