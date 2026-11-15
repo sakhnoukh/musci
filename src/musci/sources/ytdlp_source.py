@@ -90,10 +90,14 @@ def score_search_candidate(track: TrackSpec, entry: dict[str, Any]) -> float:
 
 def pick_best_candidate(track: TrackSpec, entries: list[dict[str, Any]]) -> dict[str, Any] | None:
     """Return the highest-scoring search candidate entry, or None if no valid candidates exist."""
+    ranked = rank_candidates(track, entries)
+    return ranked[0] if ranked else None
+
+
+def rank_candidates(track: TrackSpec, entries: list[dict[str, Any]]) -> list[dict[str, Any]]:
+    """Return valid search candidate entries ordered best-first."""
     valid = [e for e in entries if isinstance(e, dict) and (e.get("url") or e.get("webpage_url") or e.get("id"))]
-    if not valid:
-        return None
-    return max(valid, key=lambda item: score_search_candidate(track, item))
+    return sorted(valid, key=lambda item: score_search_candidate(track, item), reverse=True)
 
 
 def _entry_to_url(entry: dict[str, Any]) -> str:
@@ -104,23 +108,46 @@ def _entry_to_url(entry: dict[str, Any]) -> str:
     return f"https://www.youtube.com/watch?v={vid_id}"
 
 
-def resolve_search_url(track: TrackSpec, max_results: int = 5) -> str:
-    """Find the best-matching YouTube URL for a metadata-only TrackSpec."""
-    query = f"{track.artist} - {track.title}".strip(" -")
+def _clean_search_query(track: TrackSpec) -> str:
+    raw = f"{track.artist} {track.title}".replace('"', " ").replace("'", "")
+    return re.sub(r"\s+", " ", raw).strip(" -")
+
+
+def resolve_search_candidates(
+    track: TrackSpec,
+    max_results: int = 5,
+    provider: str = "ytsearch",
+) -> list[str]:
+    """Return ranked audio stream URLs from a search provider ('ytsearch' or 'scsearch')."""
+    query = _clean_search_query(track)
     ydl_opts: dict[str, Any] = {
         "extract_flat": True,
         "quiet": True,
         "no_warnings": True,
         "noplaylist": True,
     }
-    with yt_dlp.YoutubeDL(ydl_opts) as ydl:
-        info = ydl.extract_info(f"ytsearch{max_results}:{query}", download=False)
+    urls: list[str] = []
+    seen: set[str] = set()
 
-    entries = (info or {}).get("entries") or []
-    best = pick_best_candidate(track, list(entries))
-    if not best:
-        raise RuntimeError(f"No matching audio results found for '{query}'.")
-    return _entry_to_url(best)
+    with yt_dlp.YoutubeDL(ydl_opts) as ydl:
+        info = ydl.extract_info(f"{provider}{max_results}:{query}", download=False)
+        for entry in rank_candidates(track, list((info or {}).get("entries") or []))[:3]:
+            u = _entry_to_url(entry)
+            if u not in seen:
+                seen.add(u)
+                urls.append(u)
+
+    return urls
+
+
+def resolve_search_url(track: TrackSpec, max_results: int = 5) -> str:
+    """Find the single best-matching audio URL for a metadata-only TrackSpec."""
+    urls = resolve_search_candidates(track, max_results=max_results, provider="ytsearch")
+    if not urls:
+        urls = resolve_search_candidates(track, max_results=max_results, provider="scsearch")
+    if not urls:
+        raise RuntimeError(f"No matching audio results found for '{track.display_name}'.")
+    return urls[0]
 
 
 def _split_artist_title(raw_title: str, uploader: str = "") -> tuple[str, str]:

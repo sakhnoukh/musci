@@ -15,12 +15,23 @@ from typing import Any, Callable
 import yt_dlp
 
 from musci.models import TrackOutcome, TrackSpec
-from musci.sources.ytdlp_source import resolve_search_url
+from musci.sources.ytdlp_source import resolve_search_candidates
 
 MANIFEST_FILENAME = ".musci-manifest.json"
 INVALID_FILENAME_CHARS_RE = re.compile(r'[<>:"/\\|?*\x00-\x1f]')
 WHITESPACE_RE = re.compile(r"\s+")
 PREFIXED_BPM_KEY_RE = re.compile(r"^\[\d{2,3}\s*-\s*[0-9A-Za-z#b]+\]\s*")
+
+
+class _SilentYdlLogger:
+    def debug(self, msg: str) -> None:
+        pass
+
+    def warning(self, msg: str) -> None:
+        pass
+
+    def error(self, msg: str) -> None:
+        pass
 
 
 def sanitize_filename(name: str, max_len: int = 180) -> str:
@@ -115,12 +126,17 @@ def download_single_track(
     expected_tmp_mp3 = output_dir / f"{tmp_token}.mp3"
 
     ffmpeg_path = shutil.which("ffmpeg")
+    node_path = shutil.which("node") or (
+        "/opt/homebrew/bin/node" if Path("/opt/homebrew/bin/node").exists() else None
+    )
     ydl_opts: dict[str, Any] = {
         "format": "bestaudio/best",
         "outtmpl": tmp_template,
         "noplaylist": True,
         "quiet": True,
         "no_warnings": True,
+        "noprogress": True,
+        "logger": _SilentYdlLogger(),
         "retries": 3,
         "fragment_retries": 3,
         "postprocessors": [
@@ -136,12 +152,42 @@ def download_single_track(
     }
     if ffmpeg_path:
         ydl_opts["ffmpeg_location"] = str(Path(ffmpeg_path).parent)
+    if node_path:
+        ydl_opts["js_runtimes"] = {"node": {"path": node_path}}
 
     try:
-        target_url = track.direct_url or resolve_search_url(track)
-        with yt_dlp.YoutubeDL(ydl_opts) as ydl:
-            ydl.download([target_url])
+        providers = ("direct",) if track.direct_url else ("ytsearch", "scsearch")
 
+        last_exc: Exception | None = None
+        attempted_any = False
+        succeeded = False
+
+        for provider in providers:
+            urls = [track.direct_url] if provider == "direct" and track.direct_url else resolve_search_candidates(track, provider=provider)
+            for target_url in urls:
+                attempted_any = True
+                for leftover in output_dir.glob(f"{tmp_token}*"):
+                    try:
+                        leftover.unlink()
+                    except OSError:
+                        pass
+                try:
+                    with yt_dlp.YoutubeDL(ydl_opts) as ydl:
+                        ydl.download([target_url])
+                    if expected_tmp_mp3.exists() and expected_tmp_mp3.stat().st_size > 0:
+                        last_exc = None
+                        succeeded = True
+                        break
+                except Exception as attempt_exc:
+                    last_exc = attempt_exc
+                    continue
+            if succeeded:
+                break
+
+        if not attempted_any:
+            raise RuntimeError(f"No matching audio results found for '{track.display_name}'.")
+        if not succeeded and last_exc is not None:
+            raise last_exc
         if not expected_tmp_mp3.exists() or expected_tmp_mp3.stat().st_size == 0:
             raise RuntimeError("Audio extraction finished without producing an MP3 file.")
 

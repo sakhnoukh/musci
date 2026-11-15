@@ -7,6 +7,14 @@ import json
 import pytest
 
 from musci.models import TrackSpec
+from musci.sources.apple_music import (
+    AppleMusicRef,
+    AppleMusicResolutionError,
+    format_apple_artwork_url,
+    is_apple_music_input,
+    parse_apple_music_ref,
+    parse_apple_ssr_html,
+)
 from musci.sources.spotify import (
     SpotifyResolutionError,
     is_spotify_input,
@@ -172,3 +180,90 @@ def test_candidate_scoring_allows_live_when_requested_in_track_title() -> None:
         "duration": 330,
     }
     assert score_search_candidate(live_track, live_entry) > score_search_candidate(live_track, karaoke_entry)
+
+
+def _make_apple_ssr_html(sections: list[dict]) -> str:
+    payload = {"data": [{"intent": {}, "data": {"sections": sections}}]}
+    return (
+        "<!DOCTYPE html><html><body>"
+        f'<script id="serialized-server-data" type="application/json">{json.dumps(payload)}</script>'
+        "</body></html>"
+    )
+
+
+def test_parse_apple_music_ref_variants_and_library_guard() -> None:
+    pl = parse_apple_music_ref("https://music.apple.com/us/playlist/acid-house/pl.u-8aAVZ6oIv0p123")
+    assert pl == AppleMusicRef(storefront="us", kind="playlist", item_id="pl.u-8aAVZ6oIv0p123", track_filter_id=None)
+
+    song_in_album = parse_apple_music_ref("https://music.apple.com/de/album/self-aware/1877803357?i=1877803360")
+    assert song_in_album == AppleMusicRef(
+        storefront="de",
+        kind="album",
+        item_id="1877803357",
+        track_filter_id="1877803360",
+    )
+
+    direct_song = parse_apple_music_ref("https://embed.music.apple.com/gb/song/da-funk/696884591")
+    assert direct_song == AppleMusicRef(storefront="gb", kind="song", item_id="696884591", track_filter_id=None)
+
+    assert is_apple_music_input("https://music.apple.com/us/playlist/pl.9b672a18307c4cd7ba1ece0106891868") is True
+    assert is_apple_music_input("https://open.spotify.com/playlist/37i9dQZF1DXcBWIGoYBM5M") is False
+
+    with pytest.raises(AppleMusicResolutionError, match="Share -> Copy Link"):
+        parse_apple_music_ref("https://music.apple.com/library/playlist/p.12345abc")
+
+
+def test_parse_apple_ssr_html_playlist_and_single_track_filter() -> None:
+    sections = [
+        {
+            "itemKind": "containerDetailHeaderLockup",
+            "items": [
+                {
+                    "title": "Acid Crate",
+                    "artwork": {"dictionary": {"url": "https://is1-ssl.mzstatic.com/img/{w}x{h}bb.{f}"}},
+                }
+            ],
+        },
+        {
+            "itemKind": "trackLockup",
+            "items": [
+                {
+                    "title": "Acid Tracks",
+                    "artistName": "Phuture",
+                    "duration": 732000,
+                    "tertiaryLinks": [{"title": "Acid Tracks - EP"}],
+                    "contentDescriptor": {"identifiers": {"storeAdamID": "1001"}},
+                    "artwork": {"dictionary": {"url": "https://is1-ssl.mzstatic.com/t1/{w}x{h}bb.{f}"}},
+                },
+                {
+                    "title": "Energy Flash",
+                    "artistName": "Joey\u00a0Beltram",
+                    "duration": 350500,
+                    "tertiaryLinks": [{"title": "Energy Flash - Single"}],
+                    "contentDescriptor": {"identifiers": {"storeAdamID": "1002"}},
+                },
+            ],
+        },
+    ]
+    html = _make_apple_ssr_html(sections)
+
+    pl_ref = AppleMusicRef(storefront="us", kind="playlist", item_id="pl.test123")
+    batch = parse_apple_ssr_html(html, pl_ref)
+    assert batch.name == "Acid Crate"
+    assert len(batch.tracks) == 2
+    assert batch.tracks[0].title == "Acid Tracks"
+    assert batch.tracks[0].artist == "Phuture"
+    assert batch.tracks[0].album == "Acid Tracks - EP"
+    assert batch.tracks[0].duration_sec == 732.0
+    assert batch.tracks[0].source_id == "apple:song:1001"
+    assert batch.tracks[0].cover_url == "https://is1-ssl.mzstatic.com/t1/600x600bb.jpg"
+    assert batch.tracks[1].artist == "Joey Beltram"
+    assert batch.tracks[1].cover_url == "https://is1-ssl.mzstatic.com/img/600x600bb.jpg"
+
+    # Album URL with ?i=1002 should return only that specific track
+    filtered_ref = AppleMusicRef(storefront="us", kind="album", item_id="999", track_filter_id="1002")
+    single_batch = parse_apple_ssr_html(html, filtered_ref)
+    assert single_batch.name is None
+    assert len(single_batch.tracks) == 1
+    assert single_batch.tracks[0].title == "Energy Flash"
+    assert format_apple_artwork_url("https://example.com/{w}x{h}bb.{f}", size=300) == "https://example.com/300x300bb.jpg"

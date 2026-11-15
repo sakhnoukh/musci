@@ -15,14 +15,14 @@ from rich.table import Table
 
 from musci.analyzer import analyze_audio_file
 from musci.downloader import ManifestStore, download_batch, sanitize_filename
-from musci.models import AnalysisResult, KeyFormat, TrackOutcome, TrackSpec
+from musci.models import AnalysisResult, KeyFormat, TrackOutcome, TrackSpec, lookup_keys_from_tag
 from musci.sources import resolve_inputs
 from musci.sources.spotify import SPOTIFY_REDIRECT_URI, run_spotify_oauth_login
 from musci.tagger import apply_filename_prefix, read_dj_tags, write_track_tags
 
 app = typer.Typer(
     name="musci",
-    help="Bulk Spotify & YouTube playlist 320kbps CBR MP3 downloader and DJ BPM/Camelot key analyzer.",
+    help="Bulk Spotify, Apple Music & YouTube playlist 320kbps CBR MP3 downloader and DJ BPM/Camelot key analyzer.",
     add_completion=False,
     no_args_is_help=True,
 )
@@ -114,7 +114,7 @@ def download_cmd(
     inputs: Annotated[
         Optional[list[str]],
         typer.Argument(
-            help="Spotify playlist/album/track URLs, YouTube/SoundCloud/Bandcamp URLs, or 'Artist - Title' queries.",
+            help="Spotify, Apple Music, or YouTube/SoundCloud/Bandcamp URLs, or 'Artist - Title' queries.",
         ),
     ] = None,
     output_dir: Annotated[
@@ -236,11 +236,12 @@ def download_cmd(
                     if not download_only:
                         existing_bpm, existing_key = read_dj_tags(mp3_path)
                         if outcome.status == "skipped" and existing_bpm and existing_key:
+                            cam_k, mus_k = lookup_keys_from_tag(existing_key)
                             analysis = AnalysisResult(
                                 bpm=float(existing_bpm),
                                 bpm_rounded=existing_bpm,
-                                camelot_key=existing_key,
-                                musical_key=existing_key,
+                                camelot_key=cam_k,
+                                musical_key=mus_k,
                                 key_confidence=1.0,
                             )
                         else:

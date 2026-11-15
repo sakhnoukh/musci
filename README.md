@@ -1,6 +1,9 @@
 # musci
 
-Bulk playlist MP3 downloader and DJ mixing prep CLI. Supports **Spotify playlists/albums/tracks**, **YouTube playlists/videos**, SoundCloud/Bandcamp links, and text tracklists.
+I wanted to start fucking around with mixing music, and couldn't be asked to download mp3s myself from youtube, so i thought i'd do something about it. 
+Could extend this to be like an npm package, but i still don't know if Spotify and Apple apis will let me do that. 
+
+Bulk playlist MP3 downloader and DJ mixing prep CLI. Supports **Spotify playlists/albums/tracks**, **Apple Music playlists/albums/songs**, **YouTube playlists/videos**, SoundCloud/Bandcamp links, and text tracklists.
 
 Downloads audio concurrently as **320kbps CBR MP3s** (constant bitrate to prevent beatgrid drift in Rekordbox, Serato, Traktor, and CDJs) with **BPM + Camelot Wheel key detection** and **ID3v2.3** tagging.
 
@@ -12,10 +15,11 @@ Activate the virtual environment (or call `.venv/bin/musci` directly):
 source .venv/bin/activate
 ```
 
-### 1. Download a Spotify or YouTube playlist (with BPM & Camelot key detection)
+### 1. Download a Spotify, Apple Music, or YouTube playlist (with BPM & Camelot key detection)
 
 ```bash
 musci download "https://open.spotify.com/playlist/37i9dQZF1DXcBWIGoYBM5M"
+musci download "https://music.apple.com/us/playlist/..."
 musci download "https://www.youtube.com/playlist?list=PL..."
 ```
 

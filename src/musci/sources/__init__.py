@@ -1,10 +1,11 @@
-"""Playlist and track source resolvers (Spotify, YouTube/yt-dlp, plain queries)."""
+"""Playlist and track source resolvers (Spotify, Apple Music, YouTube/yt-dlp, plain queries)."""
 
 from __future__ import annotations
 
 from pathlib import Path
 
 from musci.models import PlaylistBatch
+from musci.sources.apple_music import fetch_apple_music_batch, is_apple_music_input
 from musci.sources.spotify import fetch_spotify_batch, is_spotify_input
 from musci.sources.ytdlp_source import fetch_ytdlp_batch
 
@@ -36,6 +37,8 @@ def resolve_inputs(
                     refresh_token=spotify_refresh_token,
                 )
             )
+        elif is_apple_music_input(item):
+            batches.append(fetch_apple_music_batch(item))
         else:
             batches.append(fetch_ytdlp_batch(item))
     return batches

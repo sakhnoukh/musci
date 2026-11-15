@@ -54,6 +54,15 @@ CAMELOT_MAP: dict[tuple[int, str], tuple[str, str]] = {
 }
 
 
+def lookup_keys_from_tag(tag_value: str) -> tuple[str, str]:
+    """Map an existing TKEY tag (either Camelot like '9B' or musical like 'G') to (camelot, musical)."""
+    cleaned = tag_value.strip()
+    for camelot, musical in CAMELOT_MAP.values():
+        if cleaned.upper() == camelot.upper() or cleaned.lower() == musical.lower():
+            return camelot, musical
+    return cleaned, cleaned
+
+
 @dataclass(frozen=True)
 class TrackSpec:
     """Normalized specification of a track to download."""

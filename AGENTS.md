@@ -2,7 +2,7 @@
 
 ## Project Overview
 
-`musci` is a Python 3.12 CLI tool for bulk-downloading Spotify and YouTube playlists/tracks as 44.1 kHz 320kbps CBR MP3s with optional `librosa`-based BPM & Camelot Wheel key detection and ID3v2.3 DJ metadata tagging.
+`musci` is a Python 3.12 CLI tool for bulk-downloading Spotify, Apple Music, and YouTube playlists/tracks as 44.1 kHz 320kbps CBR MP3s with optional `librosa`-based BPM & Camelot Wheel key detection and ID3v2.3 DJ metadata tagging.
 
 ## Environment & Commands
 
