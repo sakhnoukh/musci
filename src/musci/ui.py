@@ -445,11 +445,12 @@ def build_welcome_panel() -> Panel:
     cmds.add_column(style="bold #00f5d4", no_wrap=True)
     cmds.add_column(style="#cbd5e1")
 
-    cmds.add_row("<paste any URL>", "Download a Spotify, Apple Music, YouTube, or SoundCloud link")
-    cmds.add_row("download <url> --download-only", "Fast MP3 download without BPM & Camelot key analysis")
+    cmds.add_row("<paste any URL>", "Download a Spotify, Apple Music, YouTube, or SoundCloud link (.mp3)")
+    cmds.add_row("<url> --format flac", "Download playlist or track in lossless .flac format")
+    cmds.add_row("download <url> --download-only", "Fast download without BPM & Camelot key analysis")
     cmds.add_row("download <url> --prefix-filename", "Save files as '[128 - 8A] Artist - Title.mp3'")
     cmds.add_row("download <url> --bpm-range 105-145", "Lock BPM octave-folding to house/techno tempo")
-    cmds.add_row("analyze <folder>", "Detect BPM & Camelot key on an existing folder of MP3s")
+    cmds.add_row("analyze <folder>", "Detect BPM & Camelot key on an existing folder of tracks")
     cmds.add_row("spotify-setup", "Guided setup for 100+ track Spotify playlists")
     cmds.add_row("help  |  clear  |  exit", "Show all CLI flags, clear screen, or quit")
 
@@ -517,6 +518,31 @@ def parse_repl_line(raw_line: str) -> list[str] | str | None:
         tokens = tokens[1:]
         if not tokens:
             return "__HELP__"
+
+    first_lower = tokens[0].lower()
+    if first_lower == "analyse":
+        tokens[0] = "analyze"
+        first_lower = "analyze"
+
+    # Support unquoted folder paths with spaces in 'analyze downloads/My Folder Name'
+    if first_lower == "analyze" and len(tokens) > 2:
+        value_flags = {"--key-format", "--bpm-range"}
+        path_parts: list[str] = []
+        flag_parts: list[str] = []
+        idx = 1
+        while idx < len(tokens):
+            tok = tokens[idx]
+            if tok in value_flags and idx + 1 < len(tokens):
+                flag_parts.extend([tok, tokens[idx + 1]])
+                idx += 2
+            elif tok.startswith("-"):
+                flag_parts.append(tok)
+                idx += 1
+            else:
+                path_parts.append(tok)
+                idx += 1
+        if path_parts:
+            return ["analyze", " ".join(path_parts), *flag_parts]
 
     first = tokens[0]
     if first.startswith(("http://", "https://", "spotify:")):

@@ -6,4 +6,5 @@ prune {{pkgetc}}
 global-exclude .env
 global-exclude .env.*
 global-exclude *.mp3
+global-exclude *.flac
 global-exclude *.py[cod]

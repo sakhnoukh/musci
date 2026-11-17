@@ -169,3 +169,33 @@ def test_manifest_deduplication_skips_already_downloaded_track(tmp_path: Path) -
     assert outcome.status == "skipped"
     assert outcome.file_path == existing_mp3
     assert sanitize_filename('AC/DC: "Back*In?Black"  ') == "AC DC Back In Black"
+
+
+def test_flac_analysis_vorbis_tagging_and_format_specific_dedup(tmp_path: Path) -> None:
+    y = _synthesize_dj_test_signal(
+        bpm=128.0,
+        chord_freqs=[220.00, 261.63, 329.63, 440.00],
+        duration_sec=14.0,
+    )
+    flac_path = tmp_path / "Test Artist - Lossless Tool.flac"
+    sf.write(str(flac_path), y, SAMPLE_RATE, format="FLAC")
+
+    analysis = analyze_audio_file(flac_path, min_bpm=70.0, max_bpm=180.0)
+    assert abs(analysis.bpm_rounded - 128) <= 1
+    assert analysis.camelot_key == "8A"
+
+    spec = TrackSpec(title="Lossless Tool", artist="Test Artist", album="Club FLACs", source_id="spotify:track:999")
+    write_track_tags(flac_path, track=spec, analysis=analysis, key_format="camelot", embed_artwork=False)
+
+    read_bpm, read_key = read_dj_tags(flac_path)
+    assert read_bpm == analysis.bpm_rounded
+    assert read_key == "8A"
+
+    prefixed = apply_filename_prefix(flac_path, analysis, key_format="camelot")
+    assert prefixed.name == f"[{analysis.bpm_rounded} - 8A] Test Artist - Lossless Tool.flac"
+
+    manifest = ManifestStore(tmp_path)
+    lock = threading.Lock()
+    flac_outcome = download_single_track(spec, tmp_path, manifest, lock, audio_format="flac")
+    assert flac_outcome.status == "skipped"
+    assert flac_outcome.file_path == prefixed

@@ -32,9 +32,13 @@ musci
 #### 1. Download a Spotify, Apple Music, or YouTube playlist (with BPM & Camelot key detection)
 
 ```bash
+# Default (.mp3 at 320kbps CBR):
 musci download "https://open.spotify.com/playlist/37i9dQZF1DXcBWIGoYBM5M"
 musci download "https://music.apple.com/us/playlist/..."
 musci download "https://www.youtube.com/playlist?list=PL..."
+
+# Lossless .flac format:
+musci download "https://open.spotify.com/playlist/..." --format flac
 ```
 
 ### 2. Fast download-only mode (skip BPM & key analysis)

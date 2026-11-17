@@ -6,6 +6,7 @@ from dataclasses import dataclass
 from pathlib import Path
 from typing import Literal
 
+AudioFormat = Literal["mp3", "flac"]
 KeyFormat = Literal["camelot", "musical"]
 
 PITCH_NAMES_SHARP: tuple[str, ...] = (

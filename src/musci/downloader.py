@@ -1,4 +1,4 @@
-"""Concurrent 320kbps CBR MP3 downloader with manifest-based deduplication."""
+"""Concurrent 320kbps CBR MP3 & lossless FLAC downloader with manifest-based deduplication."""
 
 from __future__ import annotations
 
@@ -14,7 +14,7 @@ from typing import Any, Callable
 
 import yt_dlp
 
-from musci.models import TrackOutcome, TrackSpec
+from musci.models import AudioFormat, TrackOutcome, TrackSpec
 from musci.sources.ytdlp_source import resolve_search_candidates
 
 MANIFEST_FILENAME = ".musci-manifest.json"
@@ -58,19 +58,31 @@ class ManifestStore:
             except (OSError, json.JSONDecodeError):
                 self._entries = {}
 
-    def get_existing_path(self, directory: Path, key: str) -> Path | None:
+    def get_existing_path(
+        self,
+        directory: Path,
+        key: str,
+        audio_format: AudioFormat = "mp3",
+    ) -> Path | None:
+        ext = f".{audio_format}"
+        fmt_key = f"{audio_format}:{key}"
         with self._lock:
-            rel_name = self._entries.get(key)
+            rel_name = self._entries.get(fmt_key)
+            if not rel_name and audio_format == "mp3":
+                rel_name = self._entries.get(key)
         if not rel_name:
             return None
         candidate = directory / rel_name
-        if candidate.exists() and candidate.stat().st_size > 0:
+        if candidate.suffix.lower() == ext and candidate.exists() and candidate.stat().st_size > 0:
             return candidate
         return None
 
-    def record(self, key: str, filename: str) -> None:
+    def record(self, key: str, filename: str, audio_format: AudioFormat = "mp3") -> None:
+        fmt_key = f"{audio_format}:{key}"
         with self._lock:
-            self._entries[key] = filename
+            self._entries[fmt_key] = filename
+            if audio_format == "mp3":
+                self._entries[key] = filename
             tmp_path = self.path.with_suffix(".tmp")
             tmp_path.write_text(
                 json.dumps(self._entries, indent=2, sort_keys=True),
@@ -79,24 +91,34 @@ class ManifestStore:
             os.replace(tmp_path, self.path)
 
 
-def _find_matching_file_on_disk(directory: Path, stem: str) -> Path | None:
-    exact = directory / f"{stem}.mp3"
+def _find_matching_file_on_disk(
+    directory: Path,
+    stem: str,
+    audio_format: AudioFormat = "mp3",
+) -> Path | None:
+    ext = f".{audio_format}"
+    exact = directory / f"{stem}{ext}"
     if exact.exists() and exact.stat().st_size > 0:
         return exact
-    for mp3_file in directory.glob("*.mp3"):
-        stripped = PREFIXED_BPM_KEY_RE.sub("", mp3_file.stem)
-        if stripped.lower() == stem.lower() and mp3_file.stat().st_size > 0:
-            return mp3_file
+    for audio_file in directory.glob(f"*{ext}"):
+        stripped = PREFIXED_BPM_KEY_RE.sub("", audio_file.stem)
+        if stripped.lower() == stem.lower() and audio_file.stat().st_size > 0:
+            return audio_file
     return None
 
 
-def _unique_destination(directory: Path, base_stem: str) -> Path:
-    candidate = directory / f"{base_stem}.mp3"
+def _unique_destination(
+    directory: Path,
+    base_stem: str,
+    audio_format: AudioFormat = "mp3",
+) -> Path:
+    ext = f".{audio_format}"
+    candidate = directory / f"{base_stem}{ext}"
     if not candidate.exists():
         return candidate
     idx = 2
     while True:
-        alt = directory / f"{base_stem} ({idx}).mp3"
+        alt = directory / f"{base_stem} ({idx}){ext}"
         if not alt.exists():
             return alt
         idx += 1
@@ -107,28 +129,44 @@ def download_single_track(
     output_dir: Path,
     manifest: ManifestStore,
     dest_lock: threading.Lock,
+    audio_format: AudioFormat = "mp3",
 ) -> TrackOutcome:
-    """Download one TrackSpec as a 320kbps CBR MP3 into output_dir."""
+    """Download one TrackSpec as a 320kbps CBR MP3 or lossless FLAC into output_dir."""
     output_dir.mkdir(parents=True, exist_ok=True)
     stem = sanitize_filename(track.display_name)
 
-    existing = manifest.get_existing_path(output_dir, track.dedup_key)
+    existing = manifest.get_existing_path(output_dir, track.dedup_key, audio_format=audio_format)
     if existing is None:
-        existing = _find_matching_file_on_disk(output_dir, stem)
+        existing = _find_matching_file_on_disk(output_dir, stem, audio_format=audio_format)
         if existing is not None:
-            manifest.record(track.dedup_key, existing.name)
+            manifest.record(track.dedup_key, existing.name, audio_format=audio_format)
 
     if existing is not None:
         return TrackOutcome(track=track, status="skipped", file_path=existing)
 
     tmp_token = f".musci_tmp_{uuid.uuid4().hex[:12]}"
     tmp_template = str(output_dir / f"{tmp_token}.%(ext)s")
-    expected_tmp_mp3 = output_dir / f"{tmp_token}.mp3"
+    expected_tmp_audio = output_dir / f"{tmp_token}.{audio_format}"
 
     ffmpeg_path = shutil.which("ffmpeg")
     node_path = shutil.which("node") or (
         "/opt/homebrew/bin/node" if Path("/opt/homebrew/bin/node").exists() else None
     )
+    if audio_format == "flac":
+        postprocessors = [{"key": "FFmpegExtractAudio", "preferredcodec": "flac"}]
+        postprocessor_args = {"extractaudio": ["-c:a", "flac", "-ar", "44100"]}
+    else:
+        postprocessors = [
+            {
+                "key": "FFmpegExtractAudio",
+                "preferredcodec": "mp3",
+                "preferredquality": "320",
+            }
+        ]
+        postprocessor_args = {
+            "extractaudio": ["-c:a", "libmp3lame", "-ar", "44100", "-b:a", "320k"],
+        }
+
     ydl_opts: dict[str, Any] = {
         "format": "bestaudio/best",
         "outtmpl": tmp_template,
@@ -139,16 +177,8 @@ def download_single_track(
         "logger": _SilentYdlLogger(),
         "retries": 3,
         "fragment_retries": 3,
-        "postprocessors": [
-            {
-                "key": "FFmpegExtractAudio",
-                "preferredcodec": "mp3",
-                "preferredquality": "320",
-            }
-        ],
-        "postprocessor_args": {
-            "extractaudio": ["-c:a", "libmp3lame", "-ar", "44100", "-b:a", "320k"],
-        },
+        "postprocessors": postprocessors,
+        "postprocessor_args": postprocessor_args,
     }
     if ffmpeg_path:
         ydl_opts["ffmpeg_location"] = str(Path(ffmpeg_path).parent)
@@ -174,7 +204,7 @@ def download_single_track(
                 try:
                     with yt_dlp.YoutubeDL(ydl_opts) as ydl:
                         ydl.download([target_url])
-                    if expected_tmp_mp3.exists() and expected_tmp_mp3.stat().st_size > 0:
+                    if expected_tmp_audio.exists() and expected_tmp_audio.stat().st_size > 0:
                         last_exc = None
                         succeeded = True
                         break
@@ -188,14 +218,14 @@ def download_single_track(
             raise RuntimeError(f"No matching audio results found for '{track.display_name}'.")
         if not succeeded and last_exc is not None:
             raise last_exc
-        if not expected_tmp_mp3.exists() or expected_tmp_mp3.stat().st_size == 0:
-            raise RuntimeError("Audio extraction finished without producing an MP3 file.")
+        if not expected_tmp_audio.exists() or expected_tmp_audio.stat().st_size == 0:
+            raise RuntimeError(f"Audio extraction finished without producing a .{audio_format} file.")
 
         with dest_lock:
-            final_path = _unique_destination(output_dir, stem)
-            os.replace(expected_tmp_mp3, final_path)
+            final_path = _unique_destination(output_dir, stem, audio_format=audio_format)
+            os.replace(expected_tmp_audio, final_path)
 
-        manifest.record(track.dedup_key, final_path.name)
+        manifest.record(track.dedup_key, final_path.name, audio_format=audio_format)
         return TrackOutcome(track=track, status="downloaded", file_path=final_path)
     except Exception as exc:
         for leftover in output_dir.glob(f"{tmp_token}*"):
@@ -210,6 +240,7 @@ def download_batch(
     tracks: list[TrackSpec],
     output_dir: Path,
     workers: int = 4,
+    audio_format: AudioFormat = "mp3",
     on_complete: Callable[[TrackOutcome], None] | None = None,
 ) -> list[TrackOutcome]:
     """Download a batch of tracks concurrently and return outcomes in original order."""
@@ -230,7 +261,14 @@ def download_batch(
 
     with ThreadPoolExecutor(max_workers=max_workers) as pool:
         future_to_idx = {
-            pool.submit(download_single_track, track, output_dir, manifest, dest_lock): idx
+            pool.submit(
+                download_single_track,
+                track,
+                output_dir,
+                manifest,
+                dest_lock,
+                audio_format,
+            ): idx
             for idx, track in enumerate(unique_tracks)
         }
         for future in as_completed(future_to_idx):

@@ -1,4 +1,4 @@
-"""ID3v2.3 metadata & DJ tagger (TBPM, TKEY, artwork) and filename prefixer."""
+"""ID3v2.3 (MP3) & Vorbis comment (FLAC) metadata/DJ tagger and filename prefixer."""
 
 from __future__ import annotations
 
@@ -7,6 +7,7 @@ import re
 from pathlib import Path
 
 import httpx
+from mutagen.flac import FLAC, Picture
 from mutagen.id3 import APIC, ID3, ID3NoHeaderError, TALB, TBPM, TKEY, TIT2, TPE1
 
 from musci.models import AnalysisResult, KeyFormat, TrackSpec
@@ -38,6 +39,44 @@ def _fetch_artwork(cover_url: str) -> tuple[bytes, str] | None:
         return None
 
 
+def _write_flac_tags(
+    flac_path: Path,
+    track: TrackSpec | None = None,
+    analysis: AnalysisResult | None = None,
+    key_format: KeyFormat = "camelot",
+    embed_artwork: bool = True,
+) -> None:
+    audio = FLAC(str(flac_path))
+    if track is not None:
+        if track.title:
+            audio["TITLE"] = [track.title]
+        if track.artist:
+            audio["ARTIST"] = [track.artist]
+        album_val = track.album or track.playlist_name or ""
+        if album_val:
+            audio["ALBUM"] = [album_val]
+
+        if embed_artwork and track.cover_url and not audio.pictures:
+            artwork = _fetch_artwork(track.cover_url)
+            if artwork is not None:
+                img_bytes, mime = artwork
+                pic = Picture()
+                pic.type = 3
+                pic.mime = mime
+                pic.desc = "Cover"
+                pic.data = img_bytes
+                audio.add_picture(pic)
+
+    if analysis is not None:
+        audio["BPM"] = [str(analysis.bpm_rounded)]
+        audio["TBPM"] = [str(analysis.bpm_rounded)]
+        key_value = analysis.camelot_key if key_format == "camelot" else analysis.musical_key
+        audio["KEY"] = [key_value]
+        audio["INITIALKEY"] = [key_value]
+
+    audio.save()
+
+
 def write_track_tags(
     mp3_path: Path,
     track: TrackSpec | None = None,
@@ -45,7 +84,17 @@ def write_track_tags(
     key_format: KeyFormat = "camelot",
     embed_artwork: bool = True,
 ) -> None:
-    """Write ID3v2.3 metadata and/or DJ BPM + Key tags into an MP3 file."""
+    """Write ID3v2.3 (MP3) or Vorbis (FLAC) metadata and DJ BPM + Key tags."""
+    if mp3_path.suffix.lower() == ".flac":
+        _write_flac_tags(
+            mp3_path,
+            track=track,
+            analysis=analysis,
+            key_format=key_format,
+            embed_artwork=embed_artwork,
+        )
+        return
+
     tags = _load_or_init_id3(mp3_path)
 
     if track is not None:
@@ -85,13 +134,31 @@ def write_track_tags(
 
 
 def read_dj_tags(mp3_path: Path) -> tuple[int | None, str | None]:
-    """Read existing (TBPM, TKEY) from an MP3 file if present."""
+    """Read existing (BPM, KEY) from an MP3 or FLAC file if present."""
+    if mp3_path.suffix.lower() == ".flac":
+        try:
+            audio = FLAC(str(mp3_path))
+        except Exception:
+            return None, None
+        bpm_val: int | None = None
+        raw_bpm_list = audio.get("BPM") or audio.get("TBPM")
+        if raw_bpm_list:
+            try:
+                bpm_val = int(round(float(str(raw_bpm_list[0]))))
+            except ValueError:
+                bpm_val = None
+        key_val: str | None = None
+        raw_key_list = audio.get("INITIALKEY") or audio.get("KEY") or audio.get("TKEY")
+        if raw_key_list:
+            key_val = str(raw_key_list[0]).strip() or None
+        return bpm_val, key_val
+
     try:
         tags = ID3(str(mp3_path))
     except ID3NoHeaderError:
         return None, None
 
-    bpm_val: int | None = None
+    bpm_val = None
     tbpm = tags.get("TBPM")
     if tbpm and tbpm.text:
         try:
@@ -99,7 +166,7 @@ def read_dj_tags(mp3_path: Path) -> tuple[int | None, str | None]:
         except ValueError:
             bpm_val = None
 
-    key_val: str | None = None
+    key_val = None
     tkey = tags.get("TKEY")
     if tkey and tkey.text:
         key_val = str(tkey.text[0]).strip() or None

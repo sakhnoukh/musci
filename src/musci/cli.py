@@ -18,7 +18,7 @@ from rich.table import Table
 from musci import __version__
 from musci.analyzer import analyze_audio_file
 from musci.downloader import ManifestStore, download_batch, sanitize_filename
-from musci.models import AnalysisResult, KeyFormat, TrackOutcome, TrackSpec, lookup_keys_from_tag
+from musci.models import AnalysisResult, AudioFormat, KeyFormat, TrackOutcome, TrackSpec, lookup_keys_from_tag
 from musci.sources import resolve_inputs
 from musci.sources.spotify import SPOTIFY_REDIRECT_URI, run_spotify_oauth_login
 from musci.tagger import apply_filename_prefix, read_dj_tags, write_track_tags
@@ -116,6 +116,13 @@ def _validate_key_format(value: str) -> KeyFormat:
     return lowered  # type: ignore[return-value]
 
 
+def _validate_audio_format(value: str) -> AudioFormat:
+    lowered = value.strip().lower().lstrip(".")
+    if lowered not in {"mp3", "flac"}:
+        raise typer.BadParameter("Audio format must be 'mp3' (default) or 'flac'.")
+    return lowered  # type: ignore[return-value]
+
+
 def _write_summary_csv(csv_path: Path, outcomes: list[TrackOutcome]) -> None:
     with csv_path.open("w", newline="", encoding="utf-8") as fh:
         writer = csv.writer(fh)
@@ -186,15 +193,19 @@ def download_cmd(
     ] = None,
     output_dir: Annotated[
         Path,
-        typer.Option("-o", "--output-dir", help="Base directory for downloaded MP3s."),
+        typer.Option("-o", "--output-dir", help="Base directory for downloaded tracks."),
     ] = Path("./downloads"),
     from_file: Annotated[
         Optional[Path],
         typer.Option("-f", "--from-file", help="Text file of URLs or 'Artist - Title' lines (one per line)."),
     ] = None,
+    audio_format: Annotated[
+        str,
+        typer.Option("--format", help="Output audio format: 'mp3' (320kbps CBR, default) or 'flac' (lossless)."),
+    ] = "mp3",
     download_only: Annotated[
         bool,
-        typer.Option("--download-only", help="Skip BPM & key detection; only download MP3s and write basic tags."),
+        typer.Option("--download-only", help="Skip BPM & key detection; only download audio and write basic tags."),
     ] = False,
     workers: Annotated[
         int,
@@ -202,7 +213,7 @@ def download_cmd(
     ] = 4,
     prefix_filename: Annotated[
         bool,
-        typer.Option("--prefix-filename", help="Rename files to '[BPM - Key] Artist - Title.mp3'."),
+        typer.Option("--prefix-filename", help="Rename files to '[BPM - Key] Artist - Title.<ext>'."),
     ] = False,
     key_format: Annotated[
         str,
@@ -221,7 +232,7 @@ def download_cmd(
         typer.Option("--no-artwork", help="Skip downloading and embedding cover art."),
     ] = False,
 ) -> None:
-    """Bulk-download Spotify, Apple Music, or YouTube playlists/tracks as 320kbps CBR MP3s with BPM & key tagging."""
+    """Bulk-download Spotify, Apple Music, or YouTube playlists/tracks as 320kbps MP3 (default) or lossless FLAC."""
     _load_musci_env()
     url_list = inputs or []
     if not url_list and from_file is None:
@@ -233,6 +244,7 @@ def download_cmd(
 
     min_bpm, max_bpm = _parse_bpm_range(bpm_range)
     validated_key_fmt = _validate_key_format(key_format)
+    validated_audio_fmt = _validate_audio_format(audio_format)
 
     spotify_id = os.getenv("SPOTIFY_CLIENT_ID") or None
     spotify_secret = os.getenv("SPOTIFY_CLIENT_SECRET") or None
@@ -283,17 +295,19 @@ def download_cmd(
             TimeElapsedColumn(),
             console=console,
         ) as progress:
-            dl_task = progress.add_task("Downloading 320kbps MP3s", total=len(batch.tracks))
+            dl_label = "Downloading lossless FLACs" if validated_audio_fmt == "flac" else "Downloading 320kbps MP3s"
+            dl_task = progress.add_task(dl_label, total=len(batch.tracks))
             outcomes = download_batch(
                 batch.tracks,
                 output_dir=target_dir,
                 workers=workers,
+                audio_format=validated_audio_fmt,
                 on_complete=lambda _: progress.advance(dl_task),
             )
 
             ready_outcomes = [o for o in outcomes if o.file_path is not None and o.file_path.exists()]
             if ready_outcomes:
-                tag_desc = "Writing ID3 tags" if download_only else "Analyzing BPM & Camelot key"
+                tag_desc = "Writing metadata tags" if download_only else "Analyzing BPM & Camelot key"
                 an_task = progress.add_task(tag_desc, total=len(ready_outcomes))
                 for outcome in ready_outcomes:
                     assert outcome.file_path is not None
@@ -334,7 +348,11 @@ def download_cmd(
                     if prefix_filename and analysis is not None:
                         renamed = apply_filename_prefix(mp3_path, analysis, key_format=validated_key_fmt)
                         outcome.file_path = renamed
-                        manifest.record(outcome.track.dedup_key, renamed.name)
+                        manifest.record(
+                            outcome.track.dedup_key,
+                            renamed.name,
+                            audio_format=validated_audio_fmt,
+                        )
 
                     progress.advance(an_task)
 
@@ -391,12 +409,15 @@ def analyze_cmd(
         mp3_files = [target]
         summary_dir = target.parent
     else:
-        pattern = "**/*.mp3" if recursive else "*.mp3"
-        mp3_files = sorted(p for p in target.glob(pattern) if p.is_file() and not p.name.startswith("."))
+        patterns = ("**/*.mp3", "**/*.flac") if recursive else ("*.mp3", "*.flac")
+        found: list[Path] = []
+        for pat in patterns:
+            found.extend(p for p in target.glob(pat) if p.is_file() and not p.name.startswith("."))
+        mp3_files = sorted(set(found))
         summary_dir = target
 
     if not mp3_files:
-        console.print(f"[yellow]No .mp3 files found in {target}.[/yellow]")
+        console.print(f"[yellow]No .mp3 or .flac files found in {target}.[/yellow]")
         raise typer.Exit(code=0)
 
     outcomes: list[TrackOutcome] = []

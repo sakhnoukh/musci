@@ -8,6 +8,7 @@ build/
 .env
 downloads/
 *.mp3
+*.flac
 *.wav
 *.webm
 *.m4a

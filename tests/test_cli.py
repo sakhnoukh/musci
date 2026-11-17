@@ -85,8 +85,8 @@ def test_cli_download_only_skips_analysis(tmp_path: Path, monkeypatch) -> None:
     def fake_resolve(*args, **kwargs):
         return [PlaylistBatch(name="My Set", tracks=[fake_track], warnings=[])]
 
-    def fake_download_batch(tracks, output_dir: Path, workers: int = 4, on_complete=None):
-        out_mp3 = output_dir / "DJ Test - Track One.mp3"
+    def fake_download_batch(tracks, output_dir: Path, workers: int = 4, audio_format: str = "mp3", on_complete=None):
+        out_mp3 = output_dir / f"DJ Test - Track One.{audio_format}"
         _create_test_mp3(out_mp3, bpm=128.0)
         outcome = TrackOutcome(track=tracks[0], status="downloaded", file_path=out_mp3)
         if on_complete:
@@ -128,6 +128,7 @@ def test_splash_screen_and_3d_sprite_alignment() -> None:
     assert "[320K]" in res.stdout
     assert "DECK-01 // JOG" in res.stdout
     assert "SPECTRUM // EQ" in res.stdout
+    assert "--format flac" in res.stdout
 
 
 def test_parse_repl_line_auto_routes_urls_and_commands() -> None:
@@ -139,9 +140,20 @@ def test_parse_repl_line_auto_routes_urls_and_commands() -> None:
         "download",
         "https://open.spotify.com/playlist/37i9dQZF1DX4dyzvuaRJ0n",
     ]
+    assert parse_repl_line("https://open.spotify.com/playlist/37i9dQZF1DX4dyzvuaRJ0n --format flac") == [
+        "download",
+        "https://open.spotify.com/playlist/37i9dQZF1DX4dyzvuaRJ0n",
+        "--format",
+        "flac",
+    ]
     assert parse_repl_line('musci download "https://music.apple.com/us/playlist/pl.123" --download-only') == [
         "download",
         "https://music.apple.com/us/playlist/pl.123",
         "--download-only",
     ]
     assert parse_repl_line("analyze ./downloads") == ["analyze", "./downloads"]
+    assert parse_repl_line("analyse downloads/The Summer Before College --prefix-filename") == [
+        "analyze",
+        "downloads/The Summer Before College",
+        "--prefix-filename",
+    ]
